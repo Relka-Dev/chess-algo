@@ -1,0 +1,15 @@
+[project]
+name = "ischess"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.3.4",
+    "pyqt6>=6.10.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipdb>=0.13.13",
+]
