@@ -25,7 +25,7 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
             elif board[x+1,y] == '':
                 return (x,y), (x+1,y)
 
-    return (0,0), (0,0)
+    return (0,0), (0,0) 
 
 #   Example how to register the function
 register_chess_bot("PawnMover", chess_bot)
