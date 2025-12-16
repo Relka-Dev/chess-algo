@@ -1,1 +1,1 @@
-# chess-algo
+# ISChess
