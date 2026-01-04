@@ -23,10 +23,10 @@ MAGIC_SQUARE = [(3, 3), (3, 4), (4, 3), (4, 4)]
 DEBUG = False
 PERSPECTIVE_COLOR = None  # couleur du joueur initial (référence pour le sens des pions)
 
-CONTROL_CENTER_BONUS = 0.5
-ADVANCED_PAWN_MULTIPLICATOR_BONUS = 0.2
-ALLIED_KING_NOT_IN_CHECK_BONUS = 3
-ENEMY_KING_IN_CHECK_BONUS = 1
+CONTROL_CENTER_BONUS = 1
+ADVANCED_PAWN_MULTIPLICATOR_BONUS = 0.5
+ALLIED_KING_NOT_IN_CHECK_BONUS = 5
+ENEMY_KING_IN_CHECK_BONUS = 3
 
 
 @dataclass
@@ -589,4 +589,4 @@ def board_evaluation(board_obj, color):
 #=================================================================================================
     
 #   Example how to register the function
-register_chess_bot("Martin", chess_bot)
+register_chess_bot("Martin_metrics", chess_bot)
