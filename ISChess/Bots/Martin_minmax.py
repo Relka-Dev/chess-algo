@@ -34,7 +34,7 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
     if DEBUG:
         print(f"Bot Martin playing color {color} with time budget {time_budget} s")
     
-    best_score_board = min_max(DEPTH, initial_board, color, color, -999999, 999999)
+    best_score_board = min_max(DEPTH, initial_board, color, color)
 
     if best_score_board[1] == None:
         return (0, 0), (0, 0)
@@ -42,9 +42,9 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
     return best_score_board[1].initial_piece_position, best_score_board[1].next_piece_position
 
 
-def min_max(depth_remaining : int, board : Board, current_color : str, initial_color : str, alpha : int, beta : int) -> tuple[int, Board]:
+def min_max(depth_remaining : int, board : Board, current_color : str, initial_color : str) -> tuple[int, Board]:
     new_boards = [] 
-
+    
     # Cas de base, profondeur 0, on explore plus
     if(depth_remaining == 0):
         return board_evaluation(board, initial_color), board
@@ -53,44 +53,33 @@ def min_max(depth_remaining : int, board : Board, current_color : str, initial_c
             for y in range(len(board.data[0])):
                 if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
                     new_boards.extend(possible_mov((x, y), board))
+                    if DEBUG:
+                        print(f"Board : {board} generated")
     
     # Joueur à maximiser
     if(current_color == initial_color):
-        current_eval = board_evaluation(board, initial_color)
-        if (current_eval < 0):
-             return current_eval, board
-
         best_score_board = (-999999, None)
 
         for new_board in new_boards:
             color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
+            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color)
 
             if(current_score_board[0] > best_score_board[0]):
                 best_score_board = (current_score_board[0], new_board)
-            
-            if current_score_board[0] > alpha:
-                alpha = current_score_board[0]
-            
-            if alpha >= beta:
-                break
     # Joueur à minimiser
     else:
         best_score_board = (9999999, None)
     
         for new_board in new_boards:
             color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
+            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color)
     
             if(current_score_board[0] < best_score_board[0]):
                 best_score_board = (current_score_board[0], new_board)
-            
-            if current_score_board[0] < beta:
-                beta = current_score_board[0]
-            
-            if beta <= alpha:
-                break
         
+        if DEBUG:
+            print(f"Meilleur Score : {best_score_board[0]}")
+    
     return best_score_board
 
 #=================================================================================================
@@ -382,4 +371,4 @@ def board_evaluation(board_obj, color):
 #=================================================================================================
     
 #   Example how to register the function
-register_chess_bot("Martin", chess_bot)
+register_chess_bot("Martin_MinMax", chess_bot)

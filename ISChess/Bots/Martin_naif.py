@@ -28,70 +28,49 @@ class Board:
     next_piece_position: tuple[int, int]
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
+    old_boards = []
+    new_boards = []
+    
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
+    old_boards.append(initial_board)
+    
+    best_new_board = [-999999, None]
     color = player_sequence[1]
+    initial_color = color
     
     if DEBUG:
         print(f"Bot Martin playing color {color} with time budget {time_budget} s")
     
-    best_score_board = min_max(DEPTH, initial_board, color, color, -999999, 999999)
-
-    if best_score_board[1] == None:
-        return (0, 0), (0, 0)
-
-    return best_score_board[1].initial_piece_position, best_score_board[1].next_piece_position
-
-
-def min_max(depth_remaining : int, board : Board, current_color : str, initial_color : str, alpha : int, beta : int) -> tuple[int, Board]:
-    new_boards = [] 
-
-    # Cas de base, profondeur 0, on explore plus
-    if(depth_remaining == 0):
-        return board_evaluation(board, initial_color), board
-
-    for x in range(len(board.data)):
-            for y in range(len(board.data[0])):
-                if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
-                    new_boards.extend(possible_mov((x, y), board))
+    for i in range(DEPTH):
+        for old_board in old_boards:
+            for x in range(len(old_board.data)):
+                for y in range(len(old_board.data[0])):
+                    if old_board.data[x][y] != '' and len(old_board.data[x][y]) > 1 and old_board.data[x][y][1] == color:
+                        new_boards.extend(possible_mov((x, y), old_board))
+        
+        if i == 0:
+            first_level_boards = new_boards[:]
+        
+        old_boards = new_boards
+        new_boards = []
+        
+        color = 'b' if color == 'w' else 'w'
     
-    # Joueur à maximiser
-    if(current_color == initial_color):
-        current_eval = board_evaluation(board, initial_color)
-        if (current_eval < 0):
-             return current_eval, board
-
-        best_score_board = (-999999, None)
-
-        for new_board in new_boards:
-            color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
-
-            if(current_score_board[0] > best_score_board[0]):
-                best_score_board = (current_score_board[0], new_board)
-            
-            if current_score_board[0] > alpha:
-                alpha = current_score_board[0]
-            
-            if alpha >= beta:
-                break
-    # Joueur à minimiser
-    else:
-        best_score_board = (9999999, None)
-    
-        for new_board in new_boards:
-            color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
-    
-            if(current_score_board[0] < best_score_board[0]):
-                best_score_board = (current_score_board[0], new_board)
-            
-            if current_score_board[0] < beta:
-                beta = current_score_board[0]
-            
-            if beta <= alpha:
+    for board_to_evaluate in old_boards:
+        board_score = board_evaluation(board_to_evaluate, initial_color)
+        
+        root_board = None
+        for fb in first_level_boards:
+            if (fb.initial_piece_position == board_to_evaluate.initial_piece_position and fb.next_piece_position == board_to_evaluate.next_piece_position):
+                root_board = fb
                 break
         
-    return best_score_board
+        if root_board and board_score > best_new_board[0]:
+            best_new_board = [board_score, root_board]
+    
+    if best_new_board[1]:
+        return best_new_board[1].initial_piece_position, best_new_board[1].next_piece_position
+    return (0, 0), (0, 0)
 
 #=================================================================================================
 # l'idée de l'exploration des coups possibles :
@@ -127,7 +106,12 @@ def possible_mov(piece_pos, board_obj):
         new_data = [row[:] for row in board]
         new_data[move[0]][move[1]] = new_data[piece_pos[0]][piece_pos[1]]
         new_data[piece_pos[0]][piece_pos[1]] = ''
-        new_board = Board(new_data, piece_pos, move)
+        
+        if board_obj.initial_piece_position == (0, 0):
+            new_board = Board(new_data, piece_pos, move)
+        else:
+            new_board = Board(new_data, board_obj.initial_piece_position, board_obj.next_piece_position)
+        
         boards.append(new_board)
     
     return boards
@@ -382,4 +366,4 @@ def board_evaluation(board_obj, color):
 #=================================================================================================
     
 #   Example how to register the function
-register_chess_bot("Martin", chess_bot)
+register_chess_bot("Martin_naif", chess_bot)
