@@ -20,6 +20,7 @@ PAWNS_WEIGHT = 1
 DEPTH = 4
 
 DEBUG = False
+PERSPECTIVE_COLOR = None  # couleur du joueur initial (référence pour le sens des pions)
 
 @dataclass
 class Board:
@@ -28,8 +29,11 @@ class Board:
     next_piece_position: tuple[int, int]
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
+    global PERSPECTIVE_COLOR
+    
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
+    PERSPECTIVE_COLOR = color
     
     if DEBUG:
         print(f"Bot Martin playing color {color} with time budget {time_budget} s")
@@ -116,11 +120,126 @@ def possible_mov(piece_pos, board_obj):
         new_data = [row[:] for row in board]
         new_data[move[0]][move[1]] = new_data[piece_pos[0]][piece_pos[1]]
         new_data[piece_pos[0]][piece_pos[1]] = ''
+
+        # On refuse les coups qui laissent le roi en échec
+        if is_king_in_check(new_data, color):
+            continue
+
         new_board = Board(new_data, piece_pos, move)
         boards.append(new_board)
-    
+
     return boards
 
+#=================================================================================================
+# Fonction pour trouver le roi (et gerer par le la suite les échecs et échecs et mat)
+def find_king(board, color):
+    for x in range(len(board)):
+        for y in range(len(board[0])):
+            pos = board[x][y]
+            if pos != '' and len(pos) > 1 and pos[0] == 'k' and pos[1] == color:
+                return (x, y)
+    return None
+
+#=================================================================================================
+# Fonction pour check si un chemin n'est pas obstruer (de manière générale)
+def is_path_clear(board, x, y, dx, dy, steps):
+    for i in range(1, steps):
+        nx = x + dx * i
+        ny = y + dy * i
+        if board[nx][ny] != '':
+            return False
+    return True
+#=================================================================================================
+# Fonction pour check si un chemin n'est pas obstruer (de manière générale)
+
+def is_king_in_check(board, color):
+    king_pos = find_king(board, color)
+    if king_pos is None:
+        return True  # pas de roi = situation invalide -> on considère "en échec"
+
+    for x in range(len(board)):
+        for y in range(len(board[0])):
+            sq = board[x][y]
+            if sq == '' or len(sq) < 2:
+                continue
+            if sq[1] == color:
+                continue  # allié
+            if attacks_square((x, y), king_pos, board):
+                return True
+    return False
+
+#=================================================================================================
+# Fonction pour check si une case est attaquée par une pièce ennemie (reflexion inversée des fonctions de mouvement qui suivent)
+# la fonction is_path_clear est utilisée seulement ici et pas dans les fonctions de mouvement implémantées AVANT.
+def attacks_square(from_pos, target_pos, board):
+    fx, fy = from_pos
+    tx, ty = target_pos
+
+    attacker = board[fx][fy]
+    if attacker == '' or len(attacker) < 2:
+        return False
+
+    piece = attacker[0]
+    dx = tx - fx
+    dy = ty - fy
+
+    adx = abs(dx)
+    ady = abs(dy)
+
+    # Pion : dépend de la perspective (pas de flip dans le minmax)
+    if piece == 'p':
+        pawn_step = 1 if attacker[1] == PERSPECTIVE_COLOR else -1
+        return (dx == pawn_step and (dy == -1 or dy == 1))
+
+    # Roi
+    if piece == 'k':
+        return adx <= 1 and ady <= 1 and not (adx == 0 and ady == 0)
+
+    # Cavalier
+    if piece == 'n':
+        return (adx, ady) in [(1, 2), (2, 1)]
+
+    # Tour
+    if piece == 'r':
+        if dx == 0 and dy != 0:
+            steps = ady
+            step_y = 1 if dy > 0 else -1
+            return is_path_clear(board, fx, fy, 0, step_y, steps)
+        if dy == 0 and dx != 0:
+            steps = adx
+            step_x = 1 if dx > 0 else -1
+            return is_path_clear(board, fx, fy, step_x, 0, steps)
+        return False
+
+    # Fou
+    if piece == 'b':
+        if adx == ady and adx != 0:
+            steps = adx
+            step_x = 1 if dx > 0 else -1
+            step_y = 1 if dy > 0 else -1
+            return is_path_clear(board, fx, fy, step_x, step_y, steps)
+        return False
+
+    # Reine
+    if piece == 'q':
+        # move comme la tour
+        if dx == 0 and dy != 0:
+            steps = ady
+            step_y = 1 if dy > 0 else -1
+            return is_path_clear(board, fx, fy, 0, step_y, steps)
+        if dy == 0 and dx != 0:
+            steps = adx
+            step_x = 1 if dx > 0 else -1
+            return is_path_clear(board, fx, fy, step_x, 0, steps)
+        # move comme le fou
+        if adx == ady and adx != 0:
+            steps = adx
+            step_x = 1 if dx > 0 else -1
+            step_y = 1 if dy > 0 else -1
+            return is_path_clear(board, fx, fy, step_x, step_y, steps)
+        return False
+
+    return False
 #=================================================================================================
 # Fonction générale qui définis si une case est possible ou pas
 def isMoveValid(target_pos, target_content, board, color):
@@ -146,7 +265,7 @@ def pawn_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
     
-    step = 1 if color == 'w' else -1
+    step = 1 if color == PERSPECTIVE_COLOR else -1
     
     # Mouvement en avant possible seulement si case vide
     if 0 <= x + step < len(board) and board[x + step][y] == '':
@@ -306,6 +425,7 @@ def queen_moves(piece_pos, board, color):
     return moves
 
 #=================================================================================================
+# mouvements possible du rois
 def king_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []    
@@ -329,6 +449,7 @@ def king_moves(piece_pos, board, color):
     return moves
 
 #=================================================================================================
+# fonction d'évaluation du plateau, en fonction des pièces présentes
 def board_evaluation(board_obj, color):
     board = board_obj.data
     white_value = 0
