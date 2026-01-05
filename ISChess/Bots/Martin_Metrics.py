@@ -7,6 +7,8 @@
 #
 
 #   Be careful with modules to import from the root (don't forget the Bots.)
+import time
+import random
 from Bots.ChessBotList import register_chess_bot
 from dataclasses import dataclass
 
@@ -17,17 +19,22 @@ KNIGHTS_WEIGHT = 3
 BISHOPS_WEIGHT = 3
 PAWNS_WEIGHT = 1
 
-DEPTH = 3
+DEPTH = 1
 MAGIC_SQUARE = [(3, 3), (3, 4), (4, 3), (4, 4)]
 
 DEBUG = False
 PERSPECTIVE_COLOR = None  # couleur du joueur initial (référence pour le sens des pions)
 
-CONTROL_CENTER_BONUS = 1
-ADVANCED_PAWN_MULTIPLICATOR_BONUS = 0.5
-ALLIED_KING_NOT_IN_CHECK_BONUS = 5
-ENEMY_KING_IN_CHECK_BONUS = 3
+CONTROL_CENTER_BONUS = 0.5
+ADVANCED_PAWN_MULTIPLICATOR_BONUS = 0.2
+ALLIED_KING_NOT_IN_CHECK_BONUS = 3
+ENEMY_KING_IN_CHECK_BONUS = 1
 
+TIMER_PURCENT = 0.95
+START_TIME = 0
+TIME_LIMIT = 0
+
+BOARD_POSITIONS = None
 
 @dataclass
 class Board:
@@ -36,12 +43,21 @@ class Board:
     next_piece_position: tuple[int, int]
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
-    global PERSPECTIVE_COLOR
+    global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS
     
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
     PERSPECTIVE_COLOR = color
     
+    TIME_LIMIT = time_budget * TIMER_PURCENT
+    START_TIME = time.time()
+
+    BOARD_POSITIONS = [(x, y) for x in range(board.shape[0]) for y in range(board.shape[1])]
+
+    for x in range(len(initial_board.data)):
+        for y in range(len(initial_board.data[0])):
+            piece = initial_board.data[x][y]
+
     if DEBUG:
         print(f"Bot Martin playing color {color} with time budget {time_budget} s")
     
@@ -54,24 +70,28 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
 
 
 def min_max(depth_remaining: int, board: Board, current_color: str, initial_color: str, alpha: int, beta: int) -> tuple[int, Board]:
+
     new_boards = [] 
 
     # Cas de base, profondeur 0, on explore plus
     if depth_remaining == 0:
         return board_evaluation(board, initial_color), board
 
-    for x in range(len(board.data)):
-        for y in range(len(board.data[0])):
-            if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
-                new_boards.extend(possible_mov((x, y), board))
-                if DEBUG:
-                    print(f"Board : {board} generated")
+    positions = BOARD_POSITIONS.copy()
+    random.shuffle(positions)
+    
+    for x, y in positions:
+        if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
+            new_boards.extend(possible_mov((x, y), board))
     
     # Joueur à maximiser
     if current_color == initial_color:
         best_score_board = (-999999, None)
 
         for new_board in new_boards:
+            if time.time() - START_TIME > TIME_LIMIT:
+                return best_score_board
+                
             color = 'b' if current_color == 'w' else 'w'
             current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
 
@@ -88,6 +108,9 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
         best_score_board = (9999999, None)
     
         for new_board in new_boards:
+            if time.time() - START_TIME > TIME_LIMIT:
+                return best_score_board
+            
             color = 'b' if current_color == 'w' else 'w'
             current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
     
@@ -99,9 +122,6 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
             
             if beta <= alpha:
                 break
-        
-        if DEBUG:
-            print(f"Meilleur Score : {best_score_board[0]}")
     
     return best_score_board
 
@@ -140,10 +160,9 @@ def possible_mov(piece_pos, board_obj):
         new_data[move[0]][move[1]] = new_data[piece_pos[0]][piece_pos[1]]
         new_data[piece_pos[0]][piece_pos[1]] = ''
 
-        # On refuse les coups qui laissent le roi en échec
         if is_king_in_check(new_data, color):
             continue
-
+        
         new_board = Board(new_data, piece_pos, move)
         boards.append(new_board)
     
@@ -199,15 +218,16 @@ def attacks_square(from_pos, target_pos, board):
         return False
 
     piece = attacker[0]
+    attacker_color = attacker[1]
     dx = tx - fx
     dy = ty - fy
 
     adx = abs(dx)
     ady = abs(dy)
 
-    # Pion : dépend de la perspective (pas de flip dans le minmax)
+    # Pion
     if piece == 'p':
-        pawn_step = 1 if attacker[1] == PERSPECTIVE_COLOR else -1
+        pawn_step = 1 if attacker_color == PERSPECTIVE_COLOR else -1
         return (dx == pawn_step and (dy == -1 or dy == 1))
 
     # Roi
@@ -285,7 +305,7 @@ def pawn_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
     
-    step = 1
+    step = 1 if color == PERSPECTIVE_COLOR else -1
     
     # Mouvement en avant possible seulement si case vide
     if 0 <= x + step < len(board) and board[x + step][y] == '':
@@ -531,8 +551,10 @@ def board_evaluation(board_obj, color):
                 # Qualité de base de la pièce
                 base_value = piece_values.get(piece, 0)
 
-                # Bonus de position
-                position_bonus = 0
+                if piece_color == 'w':
+                    white_value += base_value
+                else:
+                    black_value += base_value
 
                 # Early game et Mid game: contrôle du centre
                 if game_phase == "EARLY" or game_phase == "MID":
@@ -589,4 +611,4 @@ def board_evaluation(board_obj, color):
 #=================================================================================================
     
 #   Example how to register the function
-register_chess_bot("Martin_metrics", chess_bot)
+register_chess_bot("Retartin", chess_bot)
