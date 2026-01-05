@@ -21,6 +21,12 @@ DEPTH = 3
 # Carré magique, la zone à contrôler pendant le EARLY / MID game
 MAGIC_SQUARE = [(3, 3), (3, 4), (4, 3), (4, 4)]
 
+# Variables pour le debug et les métriques
+DEBUG = False
+METRICS_ENABLED = True
+METRICS_PRINT = True
+
+METRICS = None  # Dictionnaire pour stocker les métriques de performance
 PERSPECTIVE_COLOR = None  # couleur du joueur initial (référence pour le sens des pions)
 
 # Constantes pour les heuristiques de la board d'évaluation
@@ -35,6 +41,7 @@ START_TIME = 0
 TIME_LIMIT = 0
 
 BOARD_POSITIONS = None
+PREVIOUS_TABLE_DATA = {}
 
 @dataclass
 class Board:
@@ -49,7 +56,35 @@ class Board:
     next_piece_position: tuple[int, int]
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
-    global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS
+    global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS, METRICS, DEBUG, PREVIOUS_TABLE_DATA
+    
+    # Nettoyer le cache pour le nouveau coup
+    PREVIOUS_TABLE_DATA.clear()
+    
+    # Initialisation des métriques
+    if METRICS_ENABLED:
+        METRICS = {
+            # Temps
+            "t_total": 0.0,
+            "t_search": 0.0,
+            "t_eval": 0.0,
+
+            # Exploration
+            "minmax_calls": 0,
+            "boards_generated": 0,
+            "moves_generated": 0,
+            "moves_legal": 0,
+            "moves_illegal_check": 0,
+
+            # Alpha-beta / limites
+            "cutoffs": 0,
+            "timeouts": 0,
+            "cache_hits": 0,
+
+            # Profondeur
+            "max_depth_reached": 0,
+        }
+        _t0_total = time.perf_counter()
     
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
@@ -60,19 +95,52 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
 
     BOARD_POSITIONS = [(x, y) for x in range(board.shape[0]) for y in range(board.shape[1])]
 
-    for x in range(len(initial_board.data)):
-        for y in range(len(initial_board.data[0])):
-            piece = initial_board.data[x][y]
+    if DEBUG:
+        print(f"Bot Martin playing color {color} with time budget {time_budget} s")
+    
+    if METRICS_ENABLED:
+        _t0_search = time.perf_counter()
     
     best_score_board = min_max(DEPTH, initial_board, color, color, -999999, 999999)
 
+    if METRICS_ENABLED:
+        METRICS["t_search"] += (time.perf_counter() - _t0_search)
+
     if best_score_board[1] == None:
         return (0, 0), (0, 0)
+
+    if METRICS_ENABLED:
+        METRICS["t_total"] = time.perf_counter() - _t0_total
+
+        if METRICS_PRINT:
+            print(
+                f"[METRICS] total={METRICS['t_total']:.4f}s "
+                f"search={METRICS['t_search']:.4f}s eval={METRICS['t_eval']:.4f}s | "
+                f"minmax_calls={METRICS['minmax_calls']} boards={METRICS['boards_generated']} | "
+                f"moves gen={METRICS['moves_generated']} legal={METRICS['moves_legal']} "
+                f"illegal_check={METRICS['moves_illegal_check']} | "
+                f"cutoffs={METRICS['cutoffs']} timeouts={METRICS['timeouts']} cache_hits={METRICS['cache_hits']} | "
+                f"max_depth={METRICS['max_depth_reached']}"
+            )
 
     return best_score_board[1].initial_piece_position, best_score_board[1].next_piece_position
 
 
 def min_max(depth_remaining: int, board: Board, current_color: str, initial_color: str, alpha: int, beta: int) -> tuple[int, Board]:
+    cache_key = (str(board.data), depth_remaining, current_color)
+    
+    # Vérifier si déjà calculé
+    if cache_key in PREVIOUS_TABLE_DATA:
+        if METRICS_ENABLED:
+            METRICS["cache_hits"] += 1
+        return PREVIOUS_TABLE_DATA[cache_key]
+
+    if METRICS_ENABLED:
+        METRICS["minmax_calls"] += 1
+
+        current_depth = DEPTH - depth_remaining
+        if current_depth > METRICS["max_depth_reached"]:
+            METRICS["max_depth_reached"] = current_depth
 
     new_boards = [] 
 
@@ -80,19 +148,32 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
     if depth_remaining == 0:
         return board_evaluation(board, initial_color), board
 
+    # On choisit les l'ordre des cases à scanner de façon aléatoire
+    # Cela est utile en tant que stochastique, quand un timeout se produit, il n'y a pas de préférence au niveau des pièces
     positions = BOARD_POSITIONS.copy()
     random.shuffle(positions)
-    
     for x, y in positions:
         if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
             new_boards.extend(possible_mov((x, y), board))
     
+    # Si on peut capturer le roi au coups suivant, c'est le meilleur coups
+    enemy_color = 'b' if current_color == 'w' else 'w'
+    for board_candidate in new_boards:
+        if find_king(board_candidate.data, enemy_color) is None:
+            if current_color == initial_color:
+                return 999999, board_candidate
+            else:
+                return -999999, board_candidate
+
     # Joueur à maximiser
     if current_color == initial_color:
         best_score_board = (-999999, None)
 
         for new_board in new_boards:
+            # Gestion du timeout
             if time.time() - START_TIME > TIME_LIMIT:
+                if METRICS_ENABLED:
+                    METRICS["timeouts"] += 1
                 return best_score_board
             color = 'b' if current_color == 'w' else 'w'
             current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
@@ -104,6 +185,8 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
                 alpha = current_score_board[0]
             
             if alpha >= beta:
+                if METRICS_ENABLED:
+                    METRICS["cutoffs"] += 1
                 break
     # Joueur à minimiser
     else:
@@ -111,6 +194,8 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
     
         for new_board in new_boards:
             if time.time() - START_TIME > TIME_LIMIT:
+                if METRICS_ENABLED:
+                    METRICS["timeouts"] += 1
                 return best_score_board
             
             color = 'b' if current_color == 'w' else 'w'
@@ -123,7 +208,12 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
                 beta = current_score_board[0]
             
             if beta <= alpha:
+                if METRICS_ENABLED:
+                    METRICS["cutoffs"] += 1
                 break
+    
+    # Sauvegarder dans le cache
+    PREVIOUS_TABLE_DATA[cache_key] = best_score_board
     
     return best_score_board
 
@@ -157,13 +247,22 @@ def possible_mov(piece_pos, board_obj):
         case 'k':
             moves = king_moves(piece_pos, board, color)
     
+    if METRICS_ENABLED:
+        METRICS["moves_generated"] += len(moves)
+    
     for move in moves:
         new_data = [row[:] for row in board]
         new_data[move[0]][move[1]] = new_data[piece_pos[0]][piece_pos[1]]
         new_data[piece_pos[0]][piece_pos[1]] = ''
 
         if is_king_in_check(new_data, color):
-            continue
+            if METRICS_ENABLED:
+                METRICS["moves_illegal_check"] += 1
+            # continue
+        
+        if METRICS_ENABLED:
+            METRICS["moves_legal"] += 1
+            METRICS["boards_generated"] += 1
         
         new_board = Board(new_data, piece_pos, move)
         boards.append(new_board)
@@ -512,8 +611,12 @@ def count_pieces(board):
 # fonction d'évaluation du plateau
 def board_evaluation(board_obj, color):
     board = board_obj.data
+
     white_value = 0
     black_value = 0
+    
+    if METRICS_ENABLED:
+        _t0_eval = time.perf_counter()
 
     # Poids des pièces
     piece_values = {
@@ -529,10 +632,6 @@ def board_evaluation(board_obj, color):
     
     white_king_alive = False
     black_king_alive = False
-    
-    # Compteur de contrôle du centre pour early/mid game
-    white_value = 0
-    black_value = 0
     
     for x in range(len(board)):
         for y in range(len(board[0])):
@@ -579,14 +678,22 @@ def board_evaluation(board_obj, color):
     
     # Roi adverse pas présent -> victoire (valeur max)
     if color == 'w' and not black_king_alive:
+        if METRICS_ENABLED:
+            METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
         return 999999
     elif color == 'b' and not white_king_alive:
+        if METRICS_ENABLED:
+            METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
         return 999999
     
     # Roi pas présent -> défaite (valeur min)
     if color == 'w' and not white_king_alive:
+        if METRICS_ENABLED:
+            METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
         return -999999
     elif color == 'b' and not black_king_alive:
+        if METRICS_ENABLED:
+            METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
         return -999999
 
     # Bonus si le roi n'est pas en échec
@@ -605,8 +712,13 @@ def board_evaluation(board_obj, color):
             black_value += ENEMY_KING_IN_CHECK_BONUS 
 
     if color == 'w':
+        if METRICS_ENABLED:
+            METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
         return white_value - black_value
     
+    if METRICS_ENABLED:
+        METRICS["t_eval"] += (time.perf_counter() - _t0_eval)
+        
     return black_value - white_value
 
 
