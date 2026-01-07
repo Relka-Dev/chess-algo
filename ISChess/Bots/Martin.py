@@ -1,7 +1,7 @@
 # Project       : Martin - ISChess
 # Authors       : Jowhn Blake, Karel Vilém Svoboda
 # Affiliation   : HES-SO Valais, Algorithmes et Structures de données
-# Date          : 05.01.2026
+# Date          : 07.01.2026
 
 import time
 import random
@@ -16,7 +16,7 @@ KNIGHTS_WEIGHT = 3
 BISHOPS_WEIGHT = 3
 PAWNS_WEIGHT = 1
 
-DEPTH = 3
+DEPTH = 4
 
 # Carré magique, la zone à contrôler pendant le EARLY / MID game
 MAGIC_SQUARE = [(3, 3), (3, 4), (4, 3), (4, 4)]
@@ -27,7 +27,7 @@ METRICS_ENABLED = True
 METRICS_PRINT = True
 
 METRICS = None  # Dictionnaire pour stocker les métriques de performance
-PERSPECTIVE_COLOR = None  # couleur du joueur initial (référence pour le sens des pions)
+PERSPECTIVE_COLOR = None  # Couleur du joueur initial (référence pour le sens des pions)
 
 # Constantes pour les heuristiques de la board d'évaluation
 CONTROL_CENTER_BONUS = 0.5
@@ -43,13 +43,16 @@ TIME_LIMIT = 0
 BOARD_POSITIONS = None
 PREVIOUS_TABLE_DATA = {}
 
+EARLY_GAME_PIECE_COUNT_MIN = 20
+MID_GAME_PIECE_COUNT_MIN = 10
+
 @dataclass
 class Board:
     """
         Structure de données permettant de représenter un plateau de jeu
         data: Matrice 2D représentant le plateau
-        intial_piece_position: Position (x,y) de la pièce initiale bougée
-        next_piece_position: Position (x,y) de la pièce initiale au coups suivant
+        initial_piece_position: Position (x,y) de la pièce initiale bougée
+        next_piece_position: Position (x,y) de la pièce initiale au coup suivant
     """
     data: list[list[str]]
     initial_piece_position: tuple[int, int]
@@ -57,9 +60,14 @@ class Board:
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
     global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS, METRICS, DEBUG, PREVIOUS_TABLE_DATA
-    
+
     # Nettoyer le cache pour le nouveau coup
+    # Pas de rétention entre les évaluations
     PREVIOUS_TABLE_DATA.clear()
+
+    # Calcul du temps total avec la marge
+    TIME_LIMIT = time_budget * TIMER_PURCENT
+    START_TIME = time.time()
     
     # Initialisation des métriques
     if METRICS_ENABLED:
@@ -86,13 +94,13 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
         }
         _t0_total = time.perf_counter()
     
+    # Génération de la board initiale
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
     PERSPECTIVE_COLOR = color 
-    
-    TIME_LIMIT = time_budget * TIMER_PURCENT
-    START_TIME = time.time()
 
+
+    # Création de la matrice 2D de toutes les positions possibles de la board. Utile pour la stochastique en cas de timeout
     BOARD_POSITIONS = [(x, y) for x in range(board.shape[0]) for y in range(board.shape[1])]
 
     if DEBUG:
@@ -101,11 +109,13 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
     if METRICS_ENABLED:
         _t0_search = time.perf_counter()
     
+    # Tuple[meilleur_score: int, meilleur_board: Board]
     best_score_board = min_max(DEPTH, initial_board, color, color, -999999, 999999)
 
     if METRICS_ENABLED:
         METRICS["t_search"] += (time.perf_counter() - _t0_search)
 
+    # Retourne un coup illégal s'il n'y a pas de coup légal
     if best_score_board[1] == None:
         return (0, 0), (0, 0)
 
@@ -123,13 +133,26 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
                 f"max_depth={METRICS['max_depth_reached']}"
             )
 
+    # Retourne le meilleur coup trouvé
     return best_score_board[1].initial_piece_position, best_score_board[1].next_piece_position
 
 
 def min_max(depth_remaining: int, board: Board, current_color: str, initial_color: str, alpha: int, beta: int) -> tuple[int, Board]:
+    """
+        Algorithme récursif de recherche de la board avec le meilleur score.
+        L'objectif est de maximiser le score du joueur avec la initial_color.
+        On part du principe que le joueur adverse va jouer le pire coup pour le joueur de initial_color.
+        Ainsi de suite jusqu'à arriver au cas de base quand depth_remaining arrive à 0
+        L'optimisation se fait avec la mémorisation et le alpha-beta pruning
+        La mémorisation se fait en hashant les boards avec leur couleur et la profondeur restante puis en les stockant dans un dictionnaire {hash, [score, board]}
+        L'alpha et beta pruning permet de couper les branches lesquelles on a la certitude qu'elles ne sont pas prises en compte
+        Alpha   : Représente la meilleure valeur que le joueur MAX peut déjà garantir
+        Beta    : Représente la pire valeur que le joueur MIN peut imposer à MAX
+    """
+    # Génération du hash de la board
     cache_key = (str(board.data), depth_remaining, current_color)
     
-    # Vérifier si déjà calculé
+    # On vérifier si déjà calculé, si oui, on retourne le score et la board en cache
     if cache_key in PREVIOUS_TABLE_DATA:
         if METRICS_ENABLED:
             METRICS["cache_hits"] += 1
@@ -141,14 +164,14 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
         current_depth = DEPTH - depth_remaining
         if current_depth > METRICS["max_depth_reached"]:
             METRICS["max_depth_reached"] = current_depth
-
-    new_boards = [] 
-
-    # Cas de base, profondeur 0, on explore plus
+        
+    # Cas de base, on s'arrête à la profondeur 0
     if depth_remaining == 0:
         return board_evaluation(board, initial_color), board
 
-    # On choisit les l'ordre des cases à scanner de façon aléatoire
+    new_boards = []
+
+    # On choisit l'ordre des cases à scanner de façon aléatoire
     # Cela est utile en tant que stochastique, quand un timeout se produit, il n'y a pas de préférence au niveau des pièces
     positions = BOARD_POSITIONS.copy()
     random.shuffle(positions)
@@ -156,7 +179,7 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
         if board.data[x][y] != '' and len(board.data[x][y]) > 1 and board.data[x][y][1] == current_color:
             new_boards.extend(possible_mov((x, y), board))
     
-    # Si on peut capturer le roi au coups suivant, c'est le meilleur coups
+    # Si on peut capturer le roi au coup suivant, c'est le meilleur coup
     enemy_color = 'b' if current_color == 'w' else 'w'
     for board_candidate in new_boards:
         if find_king(board_candidate.data, enemy_color) is None:
@@ -165,26 +188,29 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
             else:
                 return -999999, board_candidate
 
-    # Joueur à maximiser
+    # Joueur à maximiser, on cherche la board avec le meilleur score
     if current_color == initial_color:
         best_score_board = (-999999, None)
 
         for new_board in new_boards:
-            # Gestion du timeout
+            # Gestion du timeout, on remonte si on a dépassé le temps limite
             if time.time() - START_TIME > TIME_LIMIT:
                 if METRICS_ENABLED:
                     METRICS["timeouts"] += 1
                 return best_score_board
-            color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
+            
+            current_score_board = min_max(depth_remaining - 1, new_board, enemy_color, initial_color, alpha, beta)
 
+            # Recherche de la meilleure board possible pour le joueur avec initial_color
             if current_score_board[0] > best_score_board[0]:
                 best_score_board = (current_score_board[0], new_board)
             
+            # Si la board actuelle est meilleure que l'alpha, il prend sa place
             if current_score_board[0] > alpha:
                 alpha = current_score_board[0]
             
             if alpha >= beta:
+                # Le joueur MIN a déjà un coup qui empêche le joueur MAX d'obtenir un meilleur résultat, alors on coupe la branche.
                 if METRICS_ENABLED:
                     METRICS["cutoffs"] += 1
                 break
@@ -193,14 +219,15 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
         best_score_board = (9999999, None)
     
         for new_board in new_boards:
+            # Gestion du timeout, on remonte si on a dépassé le temps limite
             if time.time() - START_TIME > TIME_LIMIT:
                 if METRICS_ENABLED:
                     METRICS["timeouts"] += 1
                 return best_score_board
-            
-            color = 'b' if current_color == 'w' else 'w'
-            current_score_board = min_max(depth_remaining - 1, new_board, color, initial_color, alpha, beta)
+
+            current_score_board = min_max(depth_remaining - 1, new_board, enemy_color, initial_color, alpha, beta)
     
+            # Recherche de la pire board possible pour le joueur avec initial_color
             if current_score_board[0] < best_score_board[0]:
                 best_score_board = (current_score_board[0], new_board)
             
@@ -208,24 +235,24 @@ def min_max(depth_remaining: int, board: Board, current_color: str, initial_colo
                 beta = current_score_board[0]
             
             if beta <= alpha:
+                # Le joueur MIN a déjà un coup qui empêche le joueur MAX d'obtenir un meilleur résultat, alors on coupe la branche.
                 if METRICS_ENABLED:
                     METRICS["cutoffs"] += 1
                 break
     
-    # Sauvegarder dans le cache
+    # On sauvegarde la board référencée par son hash dans le dictionnaire
     PREVIOUS_TABLE_DATA[cache_key] = best_score_board
     
     return best_score_board
 
 #=================================================================================================
-# l'idée de l'exploration des coups possibles :
+# L'idée de l'exploration des coups possibles :
 # Parcourir l'entièreté du plateau (avec une couleur sélectionnée)
-# pour chaque pièce de cette couleur, générer les coups possibles
+# Pour chaque pièce de cette couleur, générer les coups possibles
 # en fonction du type de pièce (pion, tour, cavalier, fou, reine, roi)
-# pour chaque coup possible, remplir un tableau ou une liste avec les nouveaux états du plateau
-# qui contient l'id de le pièce qui peut se déplacer sur la case ciblée
-# on aura en résultat un tableau contenant tous les coups possibles pour la couleur sélectionnée avec l'id de la pièce
-# Fonction récursive
+# Pour chaque coup possible, remplir un tableau ou une liste avec les nouveaux états du plateau
+# qui contient l'id de la pièce qui peut se déplacer sur la case ciblée
+# On aura en résultat un tableau contenant tous les coups possibles pour la couleur sélectionnée avec l'id de la pièce
 def possible_mov(piece_pos, board_obj):
     board = board_obj.data
     piece = board[piece_pos[0]][piece_pos[1]][0]
@@ -270,7 +297,7 @@ def possible_mov(piece_pos, board_obj):
     return boards
 
 #=================================================================================================
-# Fonction pour trouver le roi (et gerer par le la suite les échecs et échecs et mat)
+# Fonction pour trouver le roi (et gérer par la suite les échecs et échecs et mat)
 def find_king(board, color):
     for x in range(len(board)):
         for y in range(len(board[0])):
@@ -280,7 +307,7 @@ def find_king(board, color):
     return None
 
 #=================================================================================================
-# Fonction pour check si un chemin n'est pas obstruer (de manière générale)
+# Fonction pour vérifier si un chemin n'est pas obstrué (de manière générale)
 def is_path_clear(board, x, y, dx, dy, steps):
     for i in range(1, steps):
         nx = x + dx * i
@@ -290,11 +317,11 @@ def is_path_clear(board, x, y, dx, dy, steps):
     return True
 
 #=================================================================================================
-# Fonction pour check si un chemin n'est pas obstruer (de manière générale)
+# Fonction pour vérifier si le roi est en échec
 def is_king_in_check(board, color):
     king_pos = find_king(board, color)
     if king_pos is None:
-        return True  # pas de roi = situation invalide -> on considère "en échec"
+        return True  # Pas de roi = situation invalide -> on considère "en échec"
 
     for x in range(len(board)):
         for y in range(len(board[0])):
@@ -302,14 +329,14 @@ def is_king_in_check(board, color):
             if sq == '' or len(sq) < 2:
                 continue
             if sq[1] == color:
-                continue  # allié
+                continue  # Allié
             if attacks_square((x, y), king_pos, board):
                 return True
     return False
 
 #=================================================================================================
-# Fonction pour check si une case est attaquée par une pièce ennemie (reflexion inversée des fonctions de mouvement qui suivent)
-# la fonction is_path_clear est utilisée seulement ici et pas dans les fonctions de mouvement implémantées AVANT.
+# Fonction pour vérifier si une case est attaquée par une pièce ennemie (réflexion inversée des fonctions de mouvement qui suivent)
+# La fonction is_path_clear est utilisée seulement ici et pas dans les fonctions de mouvement implémentées AVANT.
 def attacks_square(from_pos, target_pos, board):
     fx, fy = from_pos
     tx, ty = target_pos
@@ -382,17 +409,17 @@ def attacks_square(from_pos, target_pos, board):
     return False
 
 #=================================================================================================
-# Fonction générale qui définis si une case est possible ou pas
+# Fonction générale qui définit si une case est possible ou pas
 def isMoveValid(target_pos, target_content, board, color):
-    # si hors plateau alors alors move impossible
+    # Si hors plateau alors move impossible
     if target_pos[0] < 0 or target_pos[0] >= len(board) or target_pos[1] < 0 or target_pos[1] >= len(board[0]):
         return False
 
-    # si vide alors Move possible
+    # Si vide alors move possible
     if target_content == '':
         return True
         
-    # si ennemie alors move possible
+    # Si ennemie alors move possible
     if len(target_content) > 1 and target_content[1] != color:
         return True
         
@@ -400,8 +427,8 @@ def isMoveValid(target_pos, target_content, board, color):
     return False
 
 #=================================================================================================
-# mouvements possibles pour le pion
-# attention le mouvement du pion est le seul avec une fonction spécifique pour manger les pions adverses en diagonale
+# Mouvements possibles pour le pion
+# Attention le mouvement du pion est le seul avec une fonction spécifique pour manger les pions adverses en diagonale
 def pawn_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
@@ -422,14 +449,14 @@ def pawn_moves(piece_pos, board, color):
             continue
         target_content = board[nx][ny]
            
-        # seulement si ennemie alors move possible
+        # Seulement si ennemie alors move possible
         if target_content != '' and len(target_content) > 1 and target_content[1] != color:
             moves.append((nx, ny))
 
     return moves
 
 #=================================================================================================
-# mouvements possible de la tour, si son mouvement est bloqué par une pièce alliée ou ennemie, il ne peut pas sauter par dessus
+# Mouvements possibles de la tour, si son mouvement est bloqué par une pièce alliée ou ennemie, elle ne peut pas sauter par-dessus
 def rook_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
@@ -443,30 +470,30 @@ def rook_moves(piece_pos, board, color):
             nx = x + dx * step
             ny = y + dy * step
 
-            # si il y a une sortie plateau => on arrête la boucle
+            # S'il y a une sortie plateau => on arrête la boucle
             if nx < 0 or nx >= len(board) or ny < 0 or ny >= len(board[0]):
                 break
 
             target_content = board[nx][ny]
 
-            # si la case est vide, on peut continuer
+            # Si la case est vide, on peut continuer
             if target_content == '':
                 moves.append((nx, ny))
                 step += 1
                 continue
 
-            # si la case est occupée par une pièce ennemie, on peut manger => on arrête
+            # Si la case est occupée par une pièce ennemie, on peut manger => on arrête
             if len(target_content) > 1 and target_content[1] != color:
                 moves.append((nx, ny))
                 break
 
-            # si la case est occupée par une pièce alliée, on arrête
+            # Si la case est occupée par une pièce alliée, on arrête
             break
 
     return moves
 
 #=================================================================================================
-# mouvements possibles pour le cavalier
+# Mouvements possibles pour le cavalier
 def knight_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
@@ -491,7 +518,7 @@ def knight_moves(piece_pos, board, color):
     return moves
 
 #=================================================================================================
-# mouvements possible du fou, si son mouvement est bloqué par une pièce alliée ou ennemie, il ne peut pas sauter par dessus
+# Mouvements possibles du fou, si son mouvement est bloqué par une pièce alliée ou ennemie, il ne peut pas sauter par-dessus
 def bishop_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
@@ -505,30 +532,30 @@ def bishop_moves(piece_pos, board, color):
             nx = x + dx * step
             ny = y + dy * step
 
-            # si il y a une sortie plateau => on arrête la boucle
+            # S'il y a une sortie plateau => on arrête la boucle
             if nx < 0 or nx >= len(board) or ny < 0 or ny >= len(board[0]):
                 break
             
             target_content = board[nx][ny]
             
-            # si la case est vide, on peut continuer
+            # Si la case est vide, on peut continuer
             if target_content == '':
                 moves.append((nx, ny))
                 step += 1
                 continue
 
-            # si la case est occupée par une pièce ennemie, on peut capturer et arrêter
+            # Si la case est occupée par une pièce ennemie, on peut capturer et arrêter
             if len(target_content) > 1 and target_content[1] != color:
                 moves.append((nx, ny))
                 break
             
-            # si la case est occupée par une pièce alliée, on arrête
+            # Si la case est occupée par une pièce alliée, on arrête
             break
         
     return moves
 
 #=================================================================================================
-# mouvements possible de la reine, si son mouvement est bloqué par une pièce alliée ou ennemie, il ne peut pas sauter par dessus
+# Mouvements possibles de la reine, si son mouvement est bloqué par une pièce alliée ou ennemie, elle ne peut pas sauter par-dessus
 def queen_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []
@@ -543,30 +570,30 @@ def queen_moves(piece_pos, board, color):
             nx = x + dx * step
             ny = y + dy * step
 
-            # hors plateau -> stop direction
+            # Hors plateau -> stop direction
             if nx < 0 or nx >= len(board) or ny < 0 or ny >= len(board[0]):
                 break
 
             target_content = board[nx][ny]
 
-            # vide -> move possible, on continue
+            # Vide -> move possible, on continue
             if target_content == '':
                 moves.append((nx, ny))
                 step += 1
                 continue
 
-            # ennemie -> move possible (capture), stop
+            # Ennemie -> move possible (capture), stop
             if len(target_content) > 1 and target_content[1] != color:
                 moves.append((nx, ny))
                 break
 
-            # alliée -> stop
+            # Alliée -> stop
             break
 
     return moves
 
 #=================================================================================================
-# mouvements possible du rois
+# Mouvements possibles du roi
 def king_moves(piece_pos, board, color):
     x, y = piece_pos
     moves = []    
@@ -592,9 +619,9 @@ def king_moves(piece_pos, board, color):
 #=================================================================================================
 def get_game_phase(board):
     pieces = count_pieces(board)
-    if pieces >= 28: 
+    if pieces >= EARLY_GAME_PIECE_COUNT_MIN: 
         return "EARLY"
-    elif pieces >= 16:
+    elif pieces >= MID_GAME_PIECE_COUNT_MIN:
         return "MID"
     else:
         return "LATE"
@@ -608,7 +635,7 @@ def count_pieces(board):
     return total_pieces
 
 #=================================================================================================
-# fonction d'évaluation du plateau
+# Fonction d'évaluation du plateau
 def board_evaluation(board_obj, color):
     board = board_obj.data
 
@@ -642,7 +669,7 @@ def board_evaluation(board_obj, color):
                 piece = piece_content[0]
                 piece_color = piece_content[1]
 
-                # On check si les rois sont en vie
+                # On vérifie si les rois sont en vie
                 if piece == 'k':
                     if piece_color == 'w':
                         white_king_alive = True
@@ -670,7 +697,7 @@ def board_evaluation(board_obj, color):
 
                 if game_phase == "LATE":
                     if piece == 'p':
-                        # Plus un pion est proche de la promotion, plus il vaux
+                        # Plus un pion est proche de la promotion, plus il vaut
                         if piece_color == 'w':
                             white_value +=  x * ADVANCED_PAWN_MULTIPLICATOR_BONUS
                         else:
@@ -723,6 +750,5 @@ def board_evaluation(board_obj, color):
 
 
 #=================================================================================================
-    
-#   Example how to register the function
+
 register_chess_bot("Martin", chess_bot)
