@@ -36,7 +36,7 @@ ALLIED_KING_NOT_IN_CHECK_BONUS = 3
 ENEMY_KING_IN_CHECK_BONUS = 1
 
 # Constante pour la gestion du budget de temps
-TIMER_PURCENT = 0.95 # Pourcentage du temps total utilisé
+TIMER_PURCENT = 0.90 # Pourcentage du temps total utilisé
 START_TIME = 0
 TIME_LIMIT = 0
 
@@ -88,7 +88,7 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
     
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
-    PERSPECTIVE_COLOR = color
+    PERSPECTIVE_COLOR = color 
     
     TIME_LIMIT = time_budget * TIMER_PURCENT
     START_TIME = time.time()

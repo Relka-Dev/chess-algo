@@ -705,4 +705,4 @@ def board_evaluation(board_obj, color):
 #=================================================================================================
     
 #   Example how to register the function
-register_chess_bot("Retartin", chess_bot)
+register_chess_bot("martin_metrics", chess_bot)
