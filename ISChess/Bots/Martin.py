@@ -16,7 +16,7 @@ KNIGHTS_WEIGHT = 3
 BISHOPS_WEIGHT = 3
 PAWNS_WEIGHT = 1
 
-DEPTH = 4
+DEPTH = 2
 
 # Carré magique, la zone à contrôler pendant le EARLY / MID game
 MAGIC_SQUARE = [(3, 3), (3, 4), (4, 3), (4, 4)]
@@ -36,7 +36,7 @@ ALLIED_KING_NOT_IN_CHECK_BONUS = 3
 ENEMY_KING_IN_CHECK_BONUS = 1
 
 # Constante pour la gestion du budget de temps
-TIMER_PURCENT = 0.90 # Pourcentage du temps total utilisé
+TIMER_PURCENT = 0.80 # Pourcentage du temps total utilisé
 START_TIME = 0
 TIME_LIMIT = 0
 
@@ -44,7 +44,12 @@ BOARD_POSITIONS = None
 PREVIOUS_TABLE_DATA = {}
 
 EARLY_GAME_PIECE_COUNT_MIN = 20
-MID_GAME_PIECE_COUNT_MIN = 10
+MID_GAME_PIECE_COUNT_MIN = 12
+
+LATE_GAME_ENEMY_KING_IN_CHECK_BONUS = 3
+LATE_GAME_DEPTH_BONUS = 2
+ADVANCED_KING_MALUS_MULTIPLICATOR = -0.3
+ADVANCED_QUEEN_MALUS_MULTIPLICATOR = -0.2
 
 @dataclass
 class Board:
@@ -59,7 +64,9 @@ class Board:
     next_piece_position: tuple[int, int]
 
 def chess_bot(player_sequence, board, time_budget, **kwargs):
-    global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS, METRICS, DEBUG, PREVIOUS_TABLE_DATA
+    global PERSPECTIVE_COLOR, START_TIME, TIME_LIMIT, BOARD_POSITIONS, METRICS, DEBUG, PREVIOUS_TABLE_DATA, DEPTH
+
+
 
     # Nettoyer le cache pour le nouveau coup
     # Pas de rétention entre les évaluations
@@ -98,6 +105,9 @@ def chess_bot(player_sequence, board, time_budget, **kwargs):
     initial_board = Board([[board[x, y] for y in range(board.shape[1])] for x in range(board.shape[0])], (0, 0), (0, 0))
     color = player_sequence[1]
     PERSPECTIVE_COLOR = color 
+
+    if get_game_phase(initial_board) == "LATE":
+        DEPTH += LATE_GAME_DEPTH_BONUS
 
 
     # Création de la matrice 2D de toutes les positions possibles de la board. Utile pour la stochastique en cas de timeout
@@ -285,7 +295,7 @@ def possible_mov(piece_pos, board_obj):
         if is_king_in_check(new_data, color):
             if METRICS_ENABLED:
                 METRICS["moves_illegal_check"] += 1
-            # continue
+            continue
         
         if METRICS_ENABLED:
             METRICS["moves_legal"] += 1
@@ -671,10 +681,23 @@ def board_evaluation(board_obj, color):
 
                 # On vérifie si les rois sont en vie
                 if piece == 'k':
+                    if game_phase == "EARLY" or game_phase == "MID": 
+                        if piece_color == 'w':
+                            white_value +=  x * ADVANCED_KING_MALUS_MULTIPLICATOR
+                        else:
+                            black_value += x * ADVANCED_KING_MALUS_MULTIPLICATOR
+
                     if piece_color == 'w':
                         white_king_alive = True
                     else:
                         black_king_alive = True
+                
+                if piece == 'q':
+                    if game_phase == "EARLY": 
+                        if piece_color == 'w':
+                            white_value +=  x * ADVANCED_QUEEN_MALUS_MULTIPLICATOR
+                        else:
+                            black_value += x * ADVANCED_QUEEN_MALUS_MULTIPLICATOR
 
                 # Qualité de base de la pièce
                 base_value = piece_values.get(piece, 0)
@@ -735,8 +758,12 @@ def board_evaluation(board_obj, color):
     if is_king_in_check(board, enemy_color):
         if color == 'w':
             white_value += ENEMY_KING_IN_CHECK_BONUS 
+            if game_phase == "LATE":
+                white_value += LATE_GAME_ENEMY_KING_IN_CHECK_BONUS
         else:
             black_value += ENEMY_KING_IN_CHECK_BONUS 
+            if game_phase == "LATE":
+                black_value += LATE_GAME_ENEMY_KING_IN_CHECK_BONUS
 
     if color == 'w':
         if METRICS_ENABLED:
